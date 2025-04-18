@@ -1,23 +1,26 @@
 #include <iostream>
 #include <cstdint>
-#include <cstring>
 #include <cmath>
 
+union Float32 {
+    float f;
+    struct {
+        uint32_t significand : 23;
+        uint32_t exponent : 8;
+        uint32_t sign : 1;
+    } bits;
+};
+
 void printFloatBits(float num) {
-    uint32_t bits;
-    std::memcpy(&bits, &num, sizeof(float)); 
-
-    uint32_t sign = (bits >> 31) & 1;              
-    uint32_t exponent = (bits >> 23) & 0xFF;       
-    uint32_t significand = bits & 0x7FFFFF;        
-
-    std::cout << "Sign: " << sign << ", Exponent: ";
+    Float32 f;
+    f.f = num;
+    std::cout << "Sign: " << f.bits.sign << ", Exponent: ";
     for (int i = 7; i >= 0; i--) {
-        std::cout << ((exponent >> i) & 1);
+        std::cout << ((f.bits.exponent >> i) & 1);
     }
     std::cout << ", Significand: ";
     for (int i = 22; i >= 0; i--) {
-        std::cout << ((significand >> i) & 1);
+        std::cout << ((f.bits.significand >> i) & 1);
     }
     std::cout << std::endl;
 }
@@ -30,66 +33,66 @@ float divideFloat(float x, float y) {
         return std::numeric_limits<float>::infinity();
     }
 
-    uint32_t bitsX, bitsY, bitsZ;
-    std::memcpy(&bitsX, &x, sizeof(float));
-    std::memcpy(&bitsY, &y, sizeof(float));
+    // Extract  components 
+    Float32 fx, fy, fz;
+    fx.f = x;
+    fy.f = y;
 
-    uint32_t signX = (bitsX >> 31) & 1;
-    uint32_t exponentX = (bitsX >> 23) & 0xFF;
-    uint32_t significandX = bitsX & 0x7FFFFF;
+    // Getting the sign 
+    fz.bits.sign = fx.bits.sign ^ fy.bits.sign;
 
-    uint32_t signY = (bitsY >> 31) & 1;
-    uint32_t exponentY = (bitsY >> 23) & 0xFF;
-    uint32_t significandY = bitsY & 0x7FFFFF;
+    // Subtractinng the exponents
+    int32_t exponent = (int32_t)fx.bits.exponent - (int32_t)fy.bits.exponent + 127;
 
-    uint32_t signZ = signX ^ signY;
-
-    int32_t exponentZ = (int32_t)exponentX - (int32_t)exponentY + 127;
-
-    if (exponentZ > 255) {
+    // CCheck for overflow/underflow
+    if (exponent > 255) {
         std::cerr << "Overflow detected!" << std::endl;
         return std::numeric_limits<float>::infinity();
     }
-    if (exponentZ < 0) {
+    if (exponent < 0) {
         std::cerr << "Underflow detected!" << std::endl;
         return 0.0f;
     }
+    fz.bits.exponent = exponent;
 
-    float significandX_f = 1.0f + (significandX / (float)(1 << 23));
-    float significandY_f = 1.0f + (significandY / (float)(1 << 23));
-    float significandZ = significandX_f / significandY_f;
+    // Divide significands
+    // Add the implicit leading 1
+    float significandX = 1.0f + (fx.bits.significand / (float)(1 << 23));
+    float significandY = 1.0f + (fy.bits.significand / (float)(1 << 23));
+    float significand = significandX / significandY;
 
+    // Normalize 
     int adjust = 0;
-    while (significandZ >= 2.0f) {
-        significandZ /= 2.0f;
+    while (significand >= 2.0f) {
+        significand /= 2.0f;
         adjust++;
     }
-    while (significandZ < 1.0f && significandZ != 0.0f) {
-        significandZ *= 2.0f;
+    while (significand < 1.0f && significand != 0.0f) {
+        significand *= 2.0f;
         adjust--;
     }
-    exponentZ += adjust;
+    fz.bits.exponent += adjust;
 
-    if (exponentZ > 255) {
+    //  overflow/underflow check 
+    if (fz.bits.exponent > 255) {
         std::cerr << "Overflow detected after normalization!" << std::endl;
         return std::numeric_limits<float>::infinity();
     }
-    if (exponentZ < 0) {
+    if (fz.bits.exponent < 0) {
         std::cerr << "Underflow detected after normalization!" << std::endl;
         return 0.0f;
     }
 
-    significandZ -= 1.0f;
-    uint32_t significandZ_bits = (uint32_t)(significandZ * (1 << 23));
+    // Extracting the fractional part of the significand AAAAAAAAAAAAAAAAAAAAA
+    significand -= 1.0f;
+    fz.bits.significand = (uint32_t)(significand * (1 << 23));
 
-    bitsZ = (signZ << 31) | ((uint32_t)exponentZ << 23) | significandZ_bits;
 
-    float result;
-    std::memcpy(&result, &bitsZ, sizeof(float));
-    return result;
+    return fz.f;
 }
 
 int main() {
+    // Test var iables
     float x = 5.5f;
     float y = 2.0f;
 
@@ -104,6 +107,7 @@ int main() {
     std::cout << "Result bits: ";
     printFloatBits(result);
 
+    // Verifying
     float expected = x / y;
     std::cout << "Expected (standard division): " << expected << std::endl;
     std::cout << "Expected bits: ";
@@ -111,3 +115,19 @@ int main() {
 
     return 0;
 }
+
+// int main() {
+//     float x = 5.5f;
+//     float y = 2.0f;
+
+//     printFloatBits(x);
+//     printFloatBits(y);
+
+//     printFloatBits(result);
+
+//     // Verifying
+//     float expected = x / y;
+//     printFloatBits(expected);
+
+//     return 0;
+// }
